@@ -15,6 +15,7 @@ type direction =
 
 type t =
   { ranges : Ranges.t
+  ; survive_at_least : Time_ns.Span.t
   ; direction : direction
   ; include_minor_heap : bool
   ; include_major_heap : bool
@@ -23,6 +24,7 @@ type t =
 
 let default =
   { ranges = { allocated_range = Time_range.all; live_range = Time_range.all }
+  ; survive_at_least = Time_ns.Span.zero
   ; direction = Explore_downwards_from_allocations
   ; include_minor_heap = true
   ; include_major_heap = true
@@ -31,11 +33,13 @@ let default =
 
 let always_true = function
   | { ranges = { live_range; allocated_range }
+    ; survive_at_least
     ; direction = _
     ; include_minor_heap
     ; include_major_heap
     } ->
     Time_range.is_all live_range
+    && Time_ns.Span.equal survive_at_least Time_ns.Span.zero
     && Time_range.is_all allocated_range
     && include_minor_heap
     && include_major_heap

@@ -20,10 +20,13 @@ let should_forget_object_collected_at time (ranges : Filter.Ranges.t) =
   Time_range.compare_point (time |> time_span_of_timedelta) ranges.live_range < 0
 ;;
 
+(* let should_forget_object_not_living_long_enought time ~survive_at_least *)
+
 let obj_ids_matching_filter
       ~trace
-      { Filter.ranges; direction = _; include_minor_heap; include_major_heap }
+      { Filter.ranges; survive_at_least; direction = _; include_minor_heap; include_major_heap }
   =
+  let alloc_time = Obj_id.Table.create () in
   let passing = Obj_id.Hash_set.create () in
   let deferred = Obj_id.Hash_set.create () in
   Trace.Reader.iter ~parse_backtraces:false trace (fun time event ->
@@ -31,11 +34,25 @@ let obj_ids_matching_filter
       if should_record_allocation_at time ranges
       then (
         Hash_set.strict_add_exn passing obj_id;
+        Obj_id.Table.set alloc_time obj_id time;
         if defer then Hash_set.strict_add_exn deferred obj_id)
     in
     let deallocate obj_id =
       if should_forget_object_collected_at time ranges
-      then Hash_set.remove passing obj_id
+      then
+        Hash_set.remove passing obj_id
+      else (
+        match Obj_id.Table.find alloc_time obj_id with
+        | None ->
+          Hash_set.remove passing obj_id
+        | Some alloc_time ->
+          let alive_time_span =
+            Time_ns.Span.(time_span_of_timedelta time - time_span_of_timedelta alloc_time)
+          in
+          if Time_ns.Span.(alive_time_span < survive_at_least) then
+            Hash_set.remove passing obj_id
+      );
+      Obj_id.Table.remove alloc_time obj_id
     in
     match event with
     | Alloc { obj_id; is_major = true; _ } ->

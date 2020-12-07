@@ -62,19 +62,47 @@ module Heap_filter = struct
   type t =
     { include_minor_heap : Checkbox.t
     ; include_major_heap : Checkbox.t
+    ; lifetime : float Changing.t;
     }
 
-  let view { include_minor_heap; include_major_heap } =
+  module Float_via_sprintf : Stringable.S with type t = float = struct
+    type t = float
+
+    let to_string x = sprintf "%g" x
+    let of_string = Float.of_string
+  end
+
+  let view { include_minor_heap; include_major_heap; lifetime } =
+    let set_value = Changing.set_value lifetime in
+    let lifespan_input =
+      Vdom_input_widgets.Entry.number
+        ~extra_attrs:
+          [ Attr.class_ "bound"
+          ; Attr.create_float "min" 0.
+          (* ; Attr.create_float "max" 10000. (\* Random value... *\) *)
+          ]
+        ~call_on_input_when:Text_changed
+        ~value:(Some 0.)
+        ~placeholder:"0."
+        ~step:0.1
+        ~on_input:(fun new_value ->
+            match new_value with
+            | None -> Vdom.Event.Ignore
+            | Some new_value -> set_value new_value)
+        (module Float_via_sprintf)
+    in
     Node.ul
       [ Attr.class_ "checkbox-list" ]
       [ Node.li [] [ Checkbox.view include_minor_heap ]
       ; Node.li [] [ Checkbox.view include_major_heap ]
+      ; Node.li [] [ Node.text "Survived at least"; lifespan_input; Node.text "s"; ]
       ]
   ;;
 end
 
 let heap_filter : Heap_filter.t Bonsai.Computation.t =
   let open Bonsai.Let_syntax in
+  let%sub lifetime = Changing.component (module Float) ~initial_value:0. in
   let%sub include_minor_heap =
     Checkbox.component ~label:"Include minor heap" ~initial_value:true
   in
@@ -83,8 +111,9 @@ let heap_filter : Heap_filter.t Bonsai.Computation.t =
   in
   return
     (let%map include_minor_heap = include_minor_heap
-     and include_major_heap = include_major_heap in
-     { Heap_filter.include_minor_heap; include_major_heap })
+     and include_major_heap = include_major_heap
+     and lifetime = lifetime in
+     { Heap_filter.include_minor_heap; include_major_heap; lifetime })
 ;;
 
 let graph_view
@@ -172,7 +201,7 @@ let button
       ~inject_outgoing
       ~ranges:{ Ranges.allocated; live }
       ~direction
-      ~heap_filter:{ Heap_filter.include_minor_heap; include_major_heap }
+      ~heap_filter:{ Heap_filter.include_minor_heap; include_major_heap; lifetime }
   =
   let on_submit =
     let outgoing_action : Memtrace_viewer_common.Action.t =
@@ -182,9 +211,11 @@ let button
         }
       in
       let direction : Filter.direction = Radio_list.value direction in
+      let survive_at_least = Time_ns.Span.of_sec (Changing.value lifetime) in
       let include_minor_heap = Checkbox.value include_minor_heap in
       let include_major_heap = Checkbox.value include_major_heap in
-      Set_filter { ranges; direction; include_minor_heap; include_major_heap }
+      Set_filter { ranges; survive_at_least;
+                   direction; include_minor_heap; include_major_heap }
     in
     Vdom.Event.Many
       [ Vdom.Event.Prevent_default (* don't do a real HTML submit! *)
@@ -193,6 +224,7 @@ let button
       ; Radio_list.reset_changing direction
       ; Checkbox.reset_changing include_minor_heap
       ; Checkbox.reset_changing include_major_heap
+      ; Changing.set_changing lifetime false
       ; inject_outgoing outgoing_action
       ]
   in
@@ -203,6 +235,7 @@ let button
     || Range_input.changing live
     || Checkbox.changing include_minor_heap
     || Checkbox.changing include_major_heap
+    || Changing.changing lifetime
   in
   let heap_filters_not_both_false =
     Checkbox.value include_minor_heap || Checkbox.value include_major_heap

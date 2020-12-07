@@ -1,3 +1,5 @@
+open! Core_kernel
+
 module Ranges : sig
   type t =
     { live_range : Time_range.t
@@ -13,6 +15,7 @@ type direction =
 
 type t =
   { ranges : Ranges.t
+  ; survive_at_least : Time_ns.Span.t
   ; direction : direction
   ; include_minor_heap : bool
   ; include_major_heap : bool
